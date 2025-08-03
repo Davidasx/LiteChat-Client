@@ -19,7 +19,7 @@ This repository contains the reference terminal client that talks to the [LiteCh
 
 ```bash
 # 1. Clone the repository (if you have not done so already)
-$ git clone https://github.com/your-org/LiteChat.git && cd LiteChat/LiteChat-Client
+$ git clone https://github.com/Davidasx/LiteChat-Client.git && cd LiteChat-Client
 
 # 2. (Recommended) Create a virtual environment
 $ python3 -m venv .venv && source .venv/bin/activate
