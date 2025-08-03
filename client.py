@@ -119,7 +119,7 @@ class LiteChatClient:
 
     # --------------------------- Registration & Auth ----------------------
 
-    def register(self) -> None:
+    def register(self) -> bool:
         while True:
             username = ask("Choose a username: ")
             if username:
@@ -129,7 +129,9 @@ class LiteChatClient:
         pub_key_str, priv_key_str, priv_key_obj = generate_keypair(username)
         print_hr()
         print("Your private key (copy & keep it secret – you will not see it again):\n")
-        print(priv_key_str)
+        # Show key body only (omit BEGIN/END lines) to avoid copy issues
+        key_body = "\n".join(priv_key_str.strip().splitlines()[1:-1])
+        print(key_body)
         print_hr()
 
         resp = requests.post(
@@ -138,7 +140,7 @@ class LiteChatClient:
         )
         if resp.status_code != 200:
             print(f"[!] Registration failed: {resp.text}")
-            return
+            return False
         print("[✓] Registered successfully!")
 
         # Keep state in memory for immediate use
@@ -146,31 +148,37 @@ class LiteChatClient:
         self.priv_key = priv_key_obj
 
         # Immediately authenticate so we can start chatting
-        self.authenticate(skip_key_input=True)
+        return self.authenticate(skip_key_input=True)
 
-    def authenticate(self, skip_key_input: bool = False) -> None:
+    def authenticate(self, skip_key_input: bool = False) -> bool:
         if not self.username:
             self.username = ask("Username: ")
 
         if self.priv_key is None and not skip_key_input:
-            print("Paste your ASCII-armored private key, then an empty line to finish:")
+            print("Paste your private key (without the BEGIN/END lines), then an empty line to finish:")
             lines = []
             while True:
                 line = input()
                 if not line:
                     break
+                # Skip potential armor header/footer if present
+                if line.startswith("-----BEGIN") or line.startswith("-----END"):
+                    continue
                 lines.append(line)
-            armored = "\n".join(lines)
+            body = "\n".join(lines)
+            header = "-----BEGIN PGP PRIVATE KEY BLOCK-----"
+            footer = "-----END PGP PRIVATE KEY BLOCK-----"
+            armored = f"{header}\n{body}\n{footer}"
             try:
                 self.priv_key = load_private_key(armored)
             except Exception as exc:
                 print(f"[!] Failed to load private key: {exc}")
                 self.priv_key = None
-                return
+                return False
 
         if self.priv_key is None:
             print("[!] No private key available – cannot authenticate.")
-            return
+            return False
 
         # Obtain challenge
         challenge_resp = requests.post(
@@ -178,7 +186,7 @@ class LiteChatClient:
         )
         if challenge_resp.status_code != 200:
             print(f"[!] Challenge request failed: {challenge_resp.text}")
-            return
+            return False
         challenge = challenge_resp.json()["challenge"]
 
         # Sign challenge
@@ -190,10 +198,11 @@ class LiteChatClient:
         )
         if verify_resp.status_code != 200:
             print(f"[!] Authentication failed: {verify_resp.text}")
-            return
+            return False
 
         self.token = verify_resp.json()["token"]
         print("[✓] Authenticated!")
+        return True
 
     # --------------------------- Messaging -------------------------------
 
@@ -212,17 +221,23 @@ class LiteChatClient:
             data = lookup_resp.json()
             recipient_pub = data["public_key"]
         else:
-            print("Paste recipient public key, then an empty line to finish:")
+            print("Paste recipient public key (without the BEGIN/END lines), then an empty line to finish:")
             lines = []
             while True:
                 line = input()
                 if not line:
                     break
+                # Skip armor header/footer if present
+                if line.startswith("-----BEGIN") or line.startswith("-----END"):
+                    continue
                 lines.append(line)
-            recipient_pub = "\n".join(lines)
-            if not recipient_pub:
+            body = "\n".join(lines)
+            if not body:
                 print("[!] No public key provided.")
                 return
+            header = "-----BEGIN PGP PUBLIC KEY BLOCK-----"
+            footer = "-----END PGP PUBLIC KEY BLOCK-----"
+            recipient_pub = f"{header}\n{body}\n{footer}"
             # If sending directly via public key we still need a recipient username for server – use its fingerprint
             recipient_pub_key, _ = PGPKey.from_blob(recipient_pub)
             fingerprint = str(recipient_pub_key.fingerprint)
@@ -331,7 +346,13 @@ class LiteChatClient:
             print(f"[!] Search failed: {resp.text}")
             return
         data = resp.json()
-        print(json.dumps(data, indent=2))
+        print_hr()
+        print(f"Username    : {data['username']}")
+        print(f"Fingerprint : {data['fingerprint']}")
+        print("Public key  :\n")
+        key_body = "\n".join(data["public_key"].strip().splitlines()[1:-1])
+        print(key_body)
+        print_hr()
 
 
 # ---------------------------------------------------------------------------
@@ -349,11 +370,10 @@ def main() -> None:
         print("1) Register\n2) Authenticate\n3) Quit")
         first = ask("> ")
         if first == "1":
-            client.register()
-            break
+            if client.register():
+                break
         elif first == "2":
-            client.authenticate()
-            if client.token:
+            if client.authenticate():
                 break
         elif first == "3":
             sys.exit(0)
